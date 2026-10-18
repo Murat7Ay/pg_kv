@@ -200,4 +200,4 @@ pg_kv used the same 108 MB of preallocated shared memory before, during and afte
 
 ## License
 
-PostgreSQL License.
+[PostgreSQL License](LICENSE) © 2026 Murat Ay.
