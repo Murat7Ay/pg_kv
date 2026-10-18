@@ -1,0 +1,2 @@
+# Scripts run inside Linux containers and under Git Bash: keep LF everywhere.
+* text=auto eol=lf

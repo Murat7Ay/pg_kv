@@ -1,0 +1,6 @@
+comment = 'Redis-style key/value cache in shared memory (no WAL, no MVCC bloat, enforced TTL)'
+default_version = '@CARGO_VERSION@'
+module_pathname = 'pg_kv'
+relocatable = false
+superuser = true
+trusted = false

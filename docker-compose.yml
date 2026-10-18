@@ -1,0 +1,47 @@
+services:
+  pg:
+    build: .
+    image: pg_kv:dev
+    environment:
+      POSTGRES_PASSWORD: postgres
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_kv
+      - -c
+      - pg_kv.max_entries=200000
+      - -c
+      - pg_kv.max_value_bytes=256
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - max_connections=200
+    volumes:
+      - ./bench:/bench:ro
+      - ./test:/test:ro
+    cpus: 4
+    shm_size: 1g
+
+  redis:
+    image: redis:8
+    # Pure cache: no RDB snapshots, no AOF, same as pg_kv's non-durable model.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    cpus: 4
+
+  # Benchmark clients run in their own containers so client CPU does not
+  # compete with the server under test.
+  pgbench:
+    image: pg_kv:dev
+    profiles: ["bench"]
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./bench:/bench:ro
+    cpus: 3
+
+  redis-bench:
+    image: redis:8
+    profiles: ["bench"]
+    entrypoint: ["sleep", "infinity"]
+    cpus: 3
