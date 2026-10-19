@@ -1,0 +1,61 @@
+name: Benchmark
+
+# pg_kv vs an UNLOGGED table vs Redis on a Linux runner (bench/run.sh).
+# Started by hand; the report is written to the job summary and uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds per measurement (median is reported)
+        default: "3"
+      duration:
+        description: Seconds per Postgres run
+        default: "15"
+      clients:
+        description: Concurrent clients
+        default: "16"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    env:
+      PG_MAJOR: 18
+      # A public-repo runner has 4 vCPUs: the server under test and its client
+      # get 2 each, and only one server is loaded at a time.
+      SERVER_CPUS: 2
+      CLIENT_CPUS: 2
+      ROUNDS: ${{ inputs.rounds }}
+      DURATION: ${{ inputs.duration }}
+      CLIENTS: ${{ inputs.clients }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build pg_kv for PostgreSQL 18
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: PG_MAJOR=18
+          tags: pg_kv:18
+          load: true
+          cache-from: |
+            type=gha,scope=toolchain
+            type=gha,scope=pg18
+      - name: Pull Redis
+        run: docker pull redis:8
+      - name: Run benchmark
+        env:
+          BENCH_ENV: GitHub Actions ubuntu-24.04 runner
+        run: ./bench/run.sh
+      - name: Write job summary
+        if: always()
+        run: |
+          report=$(ls -t bench/results/*.md | head -1)
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bench-results
+          path: bench/results/

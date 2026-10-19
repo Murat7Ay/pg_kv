@@ -1,7 +1,12 @@
+# PG_MAJOR (15-18) picks the PostgreSQL major; SERVER_CPUS / CLIENT_CPUS set the
+# CPU quotas (keep them within the machine's CPU count, e.g. 2/2 on a 4-vCPU CI runner).
 services:
   pg:
-    build: .
-    image: pg_kv:dev
+    build:
+      context: .
+      args:
+        PG_MAJOR: ${PG_MAJOR:-18}
+    image: pg_kv:${PG_MAJOR:-18}
     environment:
       POSTGRES_PASSWORD: postgres
     command:
@@ -19,29 +24,29 @@ services:
     volumes:
       - ./bench:/bench:ro
       - ./test:/test:ro
-    cpus: 4
+    cpus: ${SERVER_CPUS:-4}
     shm_size: 1g
 
   redis:
     image: redis:8
     # Pure cache: no RDB snapshots, no AOF, same as pg_kv's non-durable model.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
-    cpus: 4
+    cpus: ${SERVER_CPUS:-4}
 
   # Benchmark clients run in their own containers so client CPU does not
   # compete with the server under test.
   pgbench:
-    image: pg_kv:dev
+    image: pg_kv:${PG_MAJOR:-18}
     profiles: ["bench"]
     entrypoint: ["sleep", "infinity"]
     environment:
       PGPASSWORD: postgres
     volumes:
       - ./bench:/bench:ro
-    cpus: 3
+    cpus: ${CLIENT_CPUS:-3}
 
   redis-bench:
     image: redis:8
     profiles: ["bench"]
     entrypoint: ["sleep", "infinity"]
-    cpus: 3
+    cpus: ${CLIENT_CPUS:-3}

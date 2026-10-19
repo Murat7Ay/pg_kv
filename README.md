@@ -130,7 +130,10 @@ A key holds a string, a token bucket or a sorted set:
 ```bash
 docker compose build pg
 ./test/run.sh
+PG_MAJOR=16 ./test/run.sh     # any of 15, 16, 17, 18 (builds pg_kv:16 if missing)
 ```
+
+CI (`.github/workflows/ci.yml`) runs the suite against PostgreSQL 15, 16, 17 and 18 on every push and pull request. Rust and cargo-pgrx are built once in a shared stage, and the matrix jobs reuse its layer cache.
 
 The suite has four parts:
 
@@ -151,7 +154,15 @@ The suite has four parts:
 
 ```bash
 ./bench/run.sh            # pg_kv vs UNLOGGED table vs Redis, results in bench/results/
+SERVER_CPUS=2 CLIENT_CPUS=2 ROUNDS=5 ./bench/run.sh
 ```
+
+How the benchmark is set up:
+- Each server gets the same CPU quota (`SERVER_CPUS`).
+- The clients (`pgbench`, `redis-benchmark`) run in separate containers with `CLIENT_CPUS` and connect over the network.
+- Only one server is under load at a time.
+
+The **Benchmark** workflow (`.github/workflows/bench.yml`, started by hand) runs the same script on a Linux GitHub runner. That avoids the Docker Desktop networking that made the Redis numbers below inconclusive. It writes the report to the job summary.
 
 ## Benchmark results (spike, 2026-10-19)
 
@@ -194,7 +205,7 @@ pg_kv used the same 108 MB of preallocated shared memory before, during and afte
 - **Fixed-size slots waste memory** on small values. 200k entries × (128 B key + 256 B value) uses 108 MB. Variable-size storage (slab classes) is next.
 - **Values are text only.** `bytea` and `jsonb` overloads are missing.
 - **Requires `shared_preload_libraries`.** A no-preload mode built on PG17's DSM registry is possible.
-- **Built and tested only on PostgreSQL 18.** A PG15–17 CI matrix is still to do.
+- **Tested on PostgreSQL 15, 16, 17 and 18** (CI matrix). PostgreSQL 19 is not covered yet; it changes some shared-memory and index-AM APIs.
 - **One lock for all sorted sets.** Sorted-set writes are serialized; reads run in parallel. Striping the pool per set is the next step if contention shows up.
 - **No benchmarks yet for rate limiting and sorted sets.** These also still need a fair Linux benchmark against Redis.
 

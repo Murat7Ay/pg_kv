@@ -2,3 +2,5 @@ target
 bench
 test
 *.md
+.git
+.github

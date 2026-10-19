@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Benchmark pg_kv vs an UNLOGGED table (same Postgres server) vs Redis.
 #
-# - Servers get the same CPU quota (4); clients run in separate containers (3 CPUs)
-#   and connect over the compose network, like an application would.
+# - Servers get the same CPU quota (SERVER_CPUS, default 4); clients run in separate
+#   containers (CLIENT_CPUS, default 3) and connect over the compose network, like
+#   an application would. BENCH_ENV labels the machine in the report.
 # - Every Postgres measurement is repeated ROUNDS times with the pg_kv and
 #   UNLOGGED runs interleaved; the median is reported. Redis likewise.
 # - bench/server_side.sql additionally measures per-operation server cost with
@@ -15,7 +16,10 @@ export MSYS_NO_PATHCONV=1   # keep /bench/... paths intact under Git Bash on Win
 
 cd "$(dirname "$0")/.."
 CLIENTS=${CLIENTS:-16}
-THREADS=${THREADS:-3}
+SERVER_CPUS=${SERVER_CPUS:-4}
+CLIENT_CPUS=${CLIENT_CPUS:-3}
+export SERVER_CPUS CLIENT_CPUS
+THREADS=${THREADS:-$CLIENT_CPUS}
 DURATION=${DURATION:-15}
 ROUNDS=${ROUNDS:-3}
 REDIS_REQUESTS=${REDIS_REQUESTS:-600000}
@@ -27,7 +31,7 @@ dc() { docker compose --profile bench "$@"; }
 psql_pg() { dc exec -T pg psql -U postgres -X -q -t -A "$@"; }
 median() { sort -g | awk '{ a[NR] = $1 } END { print (NR % 2) ? a[(NR + 1) / 2] : (a[NR / 2] + a[NR / 2 + 1]) / 2 }'; }
 
-dc up -d pg redis pgbench redis-bench >/dev/null
+dc up -d --renew-anon-volumes pg redis pgbench redis-bench >/dev/null
 until dc exec -T pg pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
 until dc exec -T redis redis-cli ping >/dev/null 2>&1; do sleep 1; done
 
@@ -86,13 +90,15 @@ echo "$SERVER_SIDE" >>"$RAW"
 PGVER=$(psql_pg -c "SHOW server_version")
 REDISVER=$(dc exec -T redis redis-server --version | sed -n 's/.*v=\([^ ]*\).*/\1/p')
 HOST_CPUS=$(dc exec -T pg nproc)
+CPU_MODEL=$(dc exec -T pg sh -c "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2" | sed 's/^ *//')
 
 fmt() { printf "%'.0f" "$1"; }
 {
   echo "# pg_kv benchmark — $STAMP"
   echo
-  echo "PostgreSQL $PGVER and Redis $REDISVER, each server limited to 4 CPUs; clients in separate 3-CPU"
-  echo "containers over the compose network (host: $HOST_CPUS CPUs). $CLIENTS clients / $THREADS client threads,"
+  echo "PostgreSQL $PGVER and Redis $REDISVER, each server limited to $SERVER_CPUS CPUs; clients in separate $CLIENT_CPUS-CPU"
+  echo "containers over the compose network. Host: ${BENCH_ENV:-local machine}, $HOST_CPUS CPUs ($CPU_MODEL)."
+  echo "$CLIENTS clients / $THREADS client threads,"
   echo "100k keys, 64-byte values. Median of $ROUNDS rounds (${DURATION}s per Postgres run, $REDIS_REQUESTS requests per Redis test)."
   echo
   echo "## Throughput over the network"
