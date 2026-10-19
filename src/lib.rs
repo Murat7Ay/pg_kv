@@ -21,8 +21,9 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
 
 use store::{
-    as_bytes, hash_key, is_expired, Geometry, Kv, KvError, KIND_STRING, KIND_ZSET, LIVE,
+    as_bytes, hash_key, is_expired, raise, Geometry, Kv, KvError, KIND_STRING, KIND_ZSET, LIVE,
 };
+use PgSqlErrorCode::*;
 use zset::ZsetVal;
 
 ::pgrx::pg_module_magic!(name, version);
@@ -36,6 +37,8 @@ static MAX_ZSET_MEMBERS: GucSetting<i32> = GucSetting::<i32>::new(100_000);
 static MAX_MEMBER_BYTES: GucSetting<i32> = GucSetting::<i32>::new(64);
 
 const SHMEM_NAME: &CStr = c"pg_kv";
+const PRELOAD_HINT: &str =
+    "Add pg_kv to shared_preload_libraries in postgresql.conf and restart PostgreSQL.";
 
 fn geometry() -> Geometry {
     Geometry::new(
@@ -55,8 +58,10 @@ static mut KV: Option<Kv> = None;
 fn kv() -> Kv {
     match unsafe { KV } {
         Some(kv) => kv,
-        None => error!(
-            "pg_kv is not initialized; add pg_kv to shared_preload_libraries and restart PostgreSQL"
+        None => raise(
+            ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE,
+            "pg_kv is not loaded: its shared memory was not set up at server start",
+            Some(PRELOAD_HINT),
         ),
     }
 }
@@ -68,7 +73,7 @@ fn now() -> i64 {
 fn interval_to_micros(ttl: &Interval) -> i64 {
     let micros = ttl.as_micros();
     if micros <= 0 {
-        error!("pg_kv: interval must be positive");
+        raise(ERRCODE_INVALID_PARAMETER_VALUE, "pg_kv: interval must be positive", None);
     }
     micros.min(i64::MAX as i128) as i64
 }
@@ -163,10 +168,14 @@ fn zset_upsert(key: &str, member: &str, f: impl FnOnce(Option<f64>) -> f64) -> (
 
 fn rate_limit_core(key: &str, capacity: i32, per: Interval, cost: i32) -> bucket::RateLimit {
     if capacity < 1 {
-        error!("pg_kv: capacity must be at least 1");
+        raise(ERRCODE_INVALID_PARAMETER_VALUE, "pg_kv: capacity must be at least 1", None);
     }
     if cost < 0 || cost > capacity {
-        error!("pg_kv: cost must be between 0 and capacity ({capacity})");
+        raise(
+            ERRCODE_INVALID_PARAMETER_VALUE,
+            format!("pg_kv: cost must be between 0 and capacity ({capacity})"),
+            None,
+        );
     }
     let per_us = interval_to_micros(&per);
     let kv = kv();
@@ -432,7 +441,7 @@ mod kv {
     #[pg_extern]
     fn zadd(key: &str, member: &str, score: f64) -> bool {
         if score.is_nan() {
-            error!("pg_kv: score must not be NaN");
+            raise(ERRCODE_INVALID_PARAMETER_VALUE, "pg_kv: score must not be NaN", None);
         }
         zset_upsert(key, member, |_| score).0
     }
@@ -442,7 +451,7 @@ mod kv {
     #[pg_extern]
     fn zincrby(key: &str, member: &str, delta: f64) -> f64 {
         if delta.is_nan() {
-            error!("pg_kv: delta must not be NaN");
+            raise(ERRCODE_INVALID_PARAMETER_VALUE, "pg_kv: delta must not be NaN", None);
         }
         zset_upsert(key, member, |old| old.unwrap_or(0.0) + delta).1
     }
@@ -547,6 +556,37 @@ mod kv {
 
     // ----------------------------------------------------------- maintenance
 
+    /// True when pg_kv was loaded through shared_preload_libraries, i.e. its
+    /// shared memory exists and the other functions can work.
+    #[pg_extern]
+    fn preloaded() -> bool {
+        unsafe { KV }.is_some()
+    }
+
+    // Runs last in CREATE EXTENSION. The cache is shared by every database and
+    // role of the cluster, so the destructive and full-scan functions are kept
+    // for the extension owner (grant them explicitly if needed), and installing
+    // into a server that did not preload the library fails instead of leaving
+    // functions that can only raise errors.
+    extension_sql!(
+        r#"
+REVOKE EXECUTE ON FUNCTION kv.flush() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION kv.verify() FROM PUBLIC;
+
+DO $$
+BEGIN
+  IF NOT kv.preloaded() THEN
+    RAISE EXCEPTION 'pg_kv must be loaded through shared_preload_libraries'
+      USING ERRCODE = 'object_not_in_prerequisite_state',
+            HINT = 'Add pg_kv to shared_preload_libraries in postgresql.conf and restart PostgreSQL.';
+  END IF;
+END
+$$;
+"#,
+        name = "finalize",
+        finalize,
+    );
+
     /// Removes all entries and returns how many were removed.
     #[pg_extern]
     fn flush() -> i64 {
@@ -613,7 +653,7 @@ mod kv {
                 }
             };
             if let Some(p) = problem {
-                error!("pg_kv: shard {shard} is inconsistent: {p}");
+                raise(ERRCODE_DATA_CORRUPTED, format!("pg_kv: shard {shard} is inconsistent: {p}"), None);
             }
         }
         let pool = {
@@ -621,7 +661,7 @@ mod kv {
             unsafe { kv.zset_pool_check() }
         };
         if let Err(p) = pool {
-            error!("pg_kv: sorted-set node pool is inconsistent: {p}");
+            raise(ERRCODE_DATA_CORRUPTED, format!("pg_kv: sorted-set node pool is inconsistent: {p}"), None);
         }
         total
     }

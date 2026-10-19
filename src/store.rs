@@ -7,6 +7,7 @@
 //! plus a header, and a `kind` that says how its value bytes are interpreted.
 
 use pgrx::pg_sys;
+use pgrx::pg_sys::panic::ErrorReport;
 use pgrx::prelude::*;
 use std::mem::size_of;
 use std::ptr;
@@ -171,6 +172,17 @@ pub unsafe fn is_expired(s: *mut Slot, now: i64) -> bool {
     (*s).expire_at != 0 && (*s).expire_at <= now
 }
 
+/// Raises an ERROR with a specific SQLSTATE, so clients can tell a WRONGTYPE
+/// from a full pool without parsing message text.
+pub fn raise(code: PgSqlErrorCode, message: impl Into<String>, hint: Option<&str>) -> ! {
+    let mut report = ErrorReport::new(code, message.into(), function_name!());
+    if let Some(hint) = hint {
+        report = report.set_hint(hint);
+    }
+    report.report(PgLogLevel::ERROR);
+    unreachable!()
+}
+
 /// Errors detected while a lock is held; raised only after the locks are released.
 pub enum KvError {
     WrongType,
@@ -182,16 +194,23 @@ pub enum KvError {
 
 impl KvError {
     pub fn raise(self) -> ! {
+        use PgSqlErrorCode::*;
         match self {
-            KvError::WrongType => {
-                error!("pg_kv: WRONGTYPE operation against a key holding the wrong kind of value")
-            }
-            KvError::NotInteger => error!("pg_kv: value is not an integer"),
-            KvError::Overflow => error!("pg_kv: increment would overflow"),
-            KvError::PoolFull => error!(
-                "pg_kv: the sorted-set member pool is full (pg_kv.max_zset_members)"
+            KvError::WrongType => raise(
+                ERRCODE_WRONG_OBJECT_TYPE,
+                "pg_kv: WRONGTYPE operation against a key holding the wrong kind of value",
+                None,
             ),
-            KvError::NotANumber => error!("pg_kv: resulting score is not a number"),
+            KvError::NotInteger => raise(ERRCODE_INVALID_TEXT_REPRESENTATION, "pg_kv: value is not an integer", None),
+            KvError::Overflow => raise(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE, "pg_kv: increment would overflow", None),
+            KvError::PoolFull => raise(
+                ERRCODE_PROGRAM_LIMIT_EXCEEDED,
+                "pg_kv: the sorted-set member pool is full",
+                Some("Raise pg_kv.max_zset_members (requires a restart) or remove members."),
+            ),
+            KvError::NotANumber => {
+                raise(ERRCODE_INVALID_PARAMETER_VALUE, "pg_kv: resulting score is not a number", None)
+            }
         }
     }
 }
@@ -269,18 +288,22 @@ impl Kv {
 
     pub fn check_sizes(&self, key: &[u8], val: Option<&[u8]>) {
         if key.len() > self.g.key_max {
-            error!(
-                "pg_kv: key is {} bytes, the limit is {} (pg_kv.max_key_bytes)",
-                key.len(),
-                self.g.key_max
+            raise(
+                PgSqlErrorCode::ERRCODE_PROGRAM_LIMIT_EXCEEDED,
+                format!("pg_kv: key is {} bytes, the limit is {} (pg_kv.max_key_bytes)", key.len(), self.g.key_max),
+                None,
             );
         }
         if let Some(val) = val {
             if val.len() > self.g.val_max {
-                error!(
-                    "pg_kv: value is {} bytes, the limit is {} (pg_kv.max_value_bytes)",
-                    val.len(),
-                    self.g.val_max
+                raise(
+                    PgSqlErrorCode::ERRCODE_PROGRAM_LIMIT_EXCEEDED,
+                    format!(
+                        "pg_kv: value is {} bytes, the limit is {} (pg_kv.max_value_bytes)",
+                        val.len(),
+                        self.g.val_max
+                    ),
+                    None,
                 );
             }
         }

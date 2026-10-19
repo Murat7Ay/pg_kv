@@ -9,7 +9,8 @@
 //! Members are ordered by (score, member bytes), the same tie-break as Redis.
 //! Everything that touches nodes or the index needs the sorted-set LWLock.
 
-use crate::store::{hash_parts, KvError, Kv, Slot};
+use crate::store::{hash_parts, raise, KvError, Kv, Slot};
+use pgrx::PgSqlErrorCode;
 use std::cmp::Ordering;
 use std::mem::size_of;
 use std::ptr;
@@ -84,13 +85,21 @@ impl Kv {
 
     pub fn check_member(&self, member: &[u8]) {
         if !self.zset_enabled() {
-            pgrx::error!("pg_kv: sorted sets are disabled (pg_kv.max_zset_members = 0)");
+            raise(
+                PgSqlErrorCode::ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE,
+                "pg_kv: sorted sets are disabled (pg_kv.max_zset_members = 0)",
+                Some("Set pg_kv.max_zset_members above 0 and restart PostgreSQL."),
+            );
         }
         if member.len() > self.g.member_max {
-            pgrx::error!(
-                "pg_kv: member is {} bytes, the limit is {} (pg_kv.max_member_bytes)",
-                member.len(),
-                self.g.member_max
+            raise(
+                PgSqlErrorCode::ERRCODE_PROGRAM_LIMIT_EXCEEDED,
+                format!(
+                    "pg_kv: member is {} bytes, the limit is {} (pg_kv.max_member_bytes)",
+                    member.len(),
+                    self.g.member_max
+                ),
+                None,
             );
         }
     }

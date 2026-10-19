@@ -60,14 +60,14 @@ BEGIN
   BEGIN
     PERFORM kv.incr('s');
     RAISE EXCEPTION 'incr on text should fail';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN invalid_text_representation THEN
     IF SQLERRM NOT LIKE '%not an integer%' THEN RAISE; END IF;
   END;
   PERFORM kv.set('big', '9223372036854775807');
   BEGIN
     PERFORM kv.incr('big');
     RAISE EXCEPTION 'overflow should fail';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN numeric_value_out_of_range THEN
     IF SQLERRM NOT LIKE '%overflow%' THEN RAISE; END IF;
   END;
 END $$;
@@ -78,13 +78,13 @@ BEGIN
   BEGIN
     PERFORM kv.set(repeat('k', 129), 'v');
     RAISE EXCEPTION 'oversized key should fail';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN program_limit_exceeded THEN
     IF SQLERRM NOT LIKE '%max_key_bytes%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.set('k', repeat('v', current_setting('pg_kv.max_value_bytes')::int + 1));
     RAISE EXCEPTION 'oversized value should fail';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN program_limit_exceeded THEN
     IF SQLERRM NOT LIKE '%max_value_bytes%' THEN RAISE; END IF;
   END;
   PERFORM kv.set('maxv', repeat('v', current_setting('pg_kv.max_value_bytes')::int));
@@ -138,6 +138,50 @@ BEGIN
 END $$;
 SELECT pg_sleep(1.6);
 DO $$ BEGIN ASSERT (SELECT entries FROM kv.stats()) = 0, 'sweeper did not reclaim expired entries'; END $$;
+
+-- access control: the cache is cluster-wide, so only roles granted USAGE on
+-- schema kv can use it, and flush/verify stay with the extension owner
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'kv_app') THEN
+    DROP OWNED BY kv_app;
+    DROP ROLE kv_app;
+  END IF;
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'kv_nobody') THEN
+    DROP ROLE kv_nobody;
+  END IF;
+END $$;
+CREATE ROLE kv_app;
+CREATE ROLE kv_nobody;
+GRANT USAGE ON SCHEMA kv TO kv_app;
+SET ROLE kv_app;
+DO $$
+BEGIN
+  PERFORM kv.set('acl:x', 'y');
+  ASSERT kv.get('acl:x') = 'y', 'a role with USAGE on schema kv can use the cache';
+  BEGIN
+    PERFORM kv.flush();
+    RAISE EXCEPTION 'flush allowed for a non-owner';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM kv.verify();
+    RAISE EXCEPTION 'verify allowed for a non-owner';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET ROLE kv_nobody;
+DO $$
+BEGIN
+  PERFORM kv.get('acl:x');
+  RAISE EXCEPTION 'a role without USAGE on schema kv could read the cache';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+RESET ROLE;
+DROP OWNED BY kv_app;
+DROP ROLE kv_app;
+DROP ROLE kv_nobody;
+DO $$ BEGIN ASSERT kv.preloaded(), 'kv.preloaded() on a preloaded server'; END $$;
 
 SELECT kv.flush() AS flushed;
 SELECT * FROM kv.stats();

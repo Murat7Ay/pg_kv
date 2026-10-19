@@ -56,39 +56,39 @@ BEGIN
   BEGIN
     PERFORM kv.rate_limit('rl:e', 0, interval '1 second');
     RAISE EXCEPTION 'capacity 0 accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
     IF SQLERRM NOT LIKE '%capacity must be at least 1%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.rate_limit('rl:e', 5, interval '1 second', 6);
     RAISE EXCEPTION 'cost > capacity accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
     IF SQLERRM NOT LIKE '%cost must be between%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.rate_limit('rl:e', 5, interval '0 seconds');
     RAISE EXCEPTION 'zero interval accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
     IF SQLERRM NOT LIKE '%interval must be positive%' THEN RAISE; END IF;
   END;
   PERFORM kv.set('rl:str', 'hello');
   BEGIN
     PERFORM kv.rate_limit('rl:str', 5, interval '1 second');
     RAISE EXCEPTION 'rate_limit on a string accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   PERFORM kv.rate_limit('rl:b', 5, interval '1 second');
   BEGIN
     PERFORM kv.get('rl:b');
     RAISE EXCEPTION 'get on a bucket accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.incr('rl:b');
     RAISE EXCEPTION 'incr on a bucket accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   PERFORM kv.set('rl:b', 'now a string');

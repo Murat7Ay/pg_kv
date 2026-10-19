@@ -105,11 +105,17 @@ A key holds a string, a token bucket or a sorted set:
   - A separate open-addressing index maps (set, member) to its node.
   - Members across all sets share one LWLock. Lock order is always shard, then sorted-set lock.
 
+## Installation
+
+- **Loading:** pg_kv has to be in `shared_preload_libraries`, because its shared memory is reserved at server start.
+- **If it is not preloaded:** `CREATE EXTENSION pg_kv` fails with SQLSTATE `55000` and a hint. It does not install functions that can only raise errors. `kv.preloaded()` reports the state.
+- **The Docker image** writes `shared_preload_libraries = 'pg_kv'` into `postgresql.conf.sample`. Every cluster it initializes therefore preloads pg_kv, even when the container command is overridden, as Testcontainers and Kubernetes do.
+
 ## Configuration (postgresql.conf, restart required)
 
 | GUC | Default | Meaning |
 |---|---|---|
-| `shared_preload_libraries` | — | must include `pg_kv` |
+| `shared_preload_libraries` | — | must include `pg_kv` (the Docker image sets it) |
 | `pg_kv.max_entries` | 65536 | capacity (keys of any kind) |
 | `pg_kv.max_key_bytes` | 128 | max key size |
 | `pg_kv.max_value_bytes` | 512 | max value size (min 32) |
@@ -124,6 +130,31 @@ A key holds a string, a token bucket or a sorted set:
 - **Not durable.** The cache is empty after a restart or crash.
 - **Not replicated.** Standbys have their own, independent cache.
 - **Fixed-size slots and pool.** Memory is preallocated and does not grow; oversized keys, values or members raise an error.
+- **One keyspace per cluster.** The shared memory is shared by every database on the server. Installing the extension in two databases gives both the same keys, so prefix keys per application or tenant.
+
+## Access control
+
+- **Who can use the cache:** a role needs `USAGE` on schema `kv`. PostgreSQL does not give `PUBLIC` access to new schemas, so grant it explicitly:
+
+  ```sql
+  GRANT USAGE ON SCHEMA kv TO app_role;
+  ```
+
+- **Owner-only functions:** `kv.flush()` empties the whole cluster's cache and `kv.verify()` scans all of it. Both are revoked from `PUBLIC` and are callable by the extension owner only. Use `GRANT EXECUTE ON FUNCTION kv.flush() TO ...` to allow others.
+
+## Error codes
+
+Errors carry a SQLSTATE, so clients can react without parsing messages:
+
+| SQLSTATE | Condition | When |
+|---|---|---|
+| `42809` | `wrong_object_type` | WRONGTYPE: e.g. `kv.get` on a sorted set, `kv.zadd` on a string |
+| `54000` | `program_limit_exceeded` | key, value or member larger than its limit; sorted-set member pool full |
+| `22023` | `invalid_parameter_value` | non-positive interval or TTL, bad `capacity`/`cost`, NaN score |
+| `22P02` | `invalid_text_representation` | `kv.incr` on a value that is not an integer |
+| `22003` | `numeric_value_out_of_range` | `kv.incr` overflow |
+| `55000` | `object_not_in_prerequisite_state` | pg_kv not preloaded; sorted sets disabled |
+| `XX001` | `data_corrupted` | `kv.verify()` found an inconsistency |
 
 ## Tests
 
@@ -135,9 +166,9 @@ PG_MAJOR=16 ./test/run.sh     # any of 15, 16, 17, 18 (builds pg_kv:16 if missin
 
 CI (`.github/workflows/ci.yml`) runs the suite against PostgreSQL 15, 16, 17 and 18 on every push and pull request. Rust and cargo-pgrx are built once in a shared stage, and the matrix jobs reuse its layer cache.
 
-The suite has four parts:
+The suite has five parts:
 
-- **Functional SQL tests** (`smoke.sql`, `rate_limit.sql`, `zset.sql`) for strings, TTL, eviction, the token bucket, sorted sets and WRONGTYPE. Sorted sets are also run through 30k random `zadd`/`zincrby`/`zrem` operations, and every member's score and rank is compared against a plain SQL table used as ground truth.
+- **Functional SQL tests** (`smoke.sql`, `rate_limit.sql`, `zset.sql`) for strings, TTL, eviction, the token bucket, sorted sets and access control. Every error case asserts its SQLSTATE, not only the message. Sorted sets are also run through 30k random `zadd`/`zincrby`/`zrem` operations, and every member's score and rank is compared against a plain SQL table used as ground truth.
 - **Concurrent stress:** 32 clients mix string and sorted-set operations, including whole-set deletes and expiry. Afterwards `kv.verify()` checks every invariant:
   - shard counters match the slots;
   - every key is reachable;
@@ -149,6 +180,9 @@ The suite has four parts:
   - reuse of freed nodes;
   - eviction freeing sorted-set members;
   - the same stress run under constant eviction.
+- **Installation checks:**
+  - the image preloads pg_kv with its default command;
+  - `CREATE EXTENSION` is refused, and nothing is installed, on a server that did not preload it.
 
 ## Benchmark
 

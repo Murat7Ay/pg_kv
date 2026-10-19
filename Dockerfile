@@ -43,4 +43,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM postgres:${PG_MAJOR}-${DEBIAN}
 COPY --from=build /out/ /
-CMD ["postgres", "-c", "shared_preload_libraries=pg_kv"]
+# Preload pg_kv in every cluster this image initializes, so it still works when
+# the command is overridden (Testcontainers, Kubernetes, compose files). This is
+# how the official image sets listen_addresses.
+RUN sed -ri "s/^#?(shared_preload_libraries)\s*=\s*'[^']*'/\1 = 'pg_kv'/" /usr/share/postgresql/postgresql.conf.sample \
+ && grep -q "^shared_preload_libraries = 'pg_kv'" /usr/share/postgresql/postgresql.conf.sample

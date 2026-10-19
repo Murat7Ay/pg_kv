@@ -73,44 +73,44 @@ BEGIN
   BEGIN
     PERFORM kv.zadd('str', 'm', 1);
     RAISE EXCEPTION 'zadd on a string accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.zrank('str', 'm');
     RAISE EXCEPTION 'zrank on a string accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.get('z');
     RAISE EXCEPTION 'get on a sorted set accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.incr('z');
     RAISE EXCEPTION 'incr on a sorted set accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN wrong_object_type THEN
     IF SQLERRM NOT LIKE '%WRONGTYPE%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.zadd('z', 'm', 'NaN'::float8);
     RAISE EXCEPTION 'NaN score accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
     IF SQLERRM NOT LIKE '%NaN%' THEN RAISE; END IF;
   END;
   BEGIN
     PERFORM kv.zadd('z', repeat('m', current_setting('pg_kv.max_member_bytes')::int + 1), 1);
     RAISE EXCEPTION 'oversized member accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN program_limit_exceeded THEN
     IF SQLERRM NOT LIKE '%max_member_bytes%' THEN RAISE; END IF;
   END;
   PERFORM kv.zincrby('z', 'inf', 'Infinity');
   BEGIN
     PERFORM kv.zincrby('z', 'inf', '-Infinity');
     RAISE EXCEPTION 'Infinity + -Infinity accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
     IF SQLERRM NOT LIKE '%not a number%' THEN RAISE; END IF;
   END;
   ASSERT kv.zscore('z', 'inf') = 'Infinity', 'failed zincrby leaves the score unchanged';

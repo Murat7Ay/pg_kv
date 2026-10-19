@@ -12,14 +12,14 @@ BEGIN
   BEGIN
     PERFORM kv.zadd('full', 'one-more', 1);
     RAISE EXCEPTION 'pool overflow accepted';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN program_limit_exceeded THEN
     IF SQLERRM NOT LIKE '%member pool is full%' THEN RAISE; END IF;
   END;
   ASSERT kv.zcard('full') = 200, 'a failed zadd leaves the set intact';
   BEGIN
     PERFORM kv.zadd('other', 'x', 1);
     RAISE EXCEPTION 'pool overflow accepted for a new set';
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN program_limit_exceeded THEN
     IF SQLERRM NOT LIKE '%member pool is full%' THEN RAISE; END IF;
   END;
   ASSERT kv.ttl('other') = -2, 'a failed zadd does not leave an empty set behind';
