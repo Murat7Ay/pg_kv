@@ -42,6 +42,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && cp -r target/release/pg_kv-pg${PG_MAJOR}/* /out/
 
 FROM postgres:${PG_MAJOR}-${DEBIAN}
+LABEL org.opencontainers.image.source="https://github.com/Murat7Ay/pg_kv" \
+      org.opencontainers.image.description="PostgreSQL with pg_kv: a Redis-style cache, rate limiter and sorted sets in shared memory" \
+      org.opencontainers.image.licenses="PostgreSQL"
 COPY --from=build /out/ /
 # Preload pg_kv in every cluster this image initializes, so it still works when
 # the command is overridden (Testcontainers, Kubernetes, compose files). This is

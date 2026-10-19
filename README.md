@@ -2,7 +2,12 @@
 
 **A Redis-style key/value cache inside PostgreSQL shared memory: no WAL, no MVCC bloat, enforced TTL.**
 
-> Status: **spike / v0.1-dev**. Not production ready.
+> Status: **v0.1.0, an early release.** Tested on PostgreSQL 15–18. Not production ready yet; feedback welcome.
+
+```bash
+docker run -d --name pg_kv -e POSTGRES_PASSWORD=postgres -p 5432:5432 ghcr.io/murat7ay/pg_kv:pg18
+psql -h localhost -U postgres -c "CREATE EXTENSION pg_kv" -c "SELECT kv.set('hello', 'world'), kv.get('hello')"
+```
 
 The "just use Postgres" answer for caching today is usually an `UNLOGGED` table. That works, but every `SET` is an `UPDATE`:
 - It creates a new row version.
@@ -106,6 +111,20 @@ A key holds a string, a token bucket or a sorted set:
   - Members across all sets share one LWLock. Lock order is always shard, then sorted-set lock.
 
 ## Installation
+
+**Docker images** for each supported major are published on GitHub Container Registry:
+
+| Image | Contents |
+|---|---|
+| `ghcr.io/murat7ay/pg_kv:pg15` … `:pg18` | latest pg_kv on the official `postgres:<major>` image |
+| `ghcr.io/murat7ay/pg_kv:0.1.0-pg15` … `:0.1.0-pg18` | pg_kv 0.1.0, pinned |
+| `ghcr.io/murat7ay/pg_kv:latest` | same as `:pg18` |
+
+**From source:**
+- Use [pgrx](https://github.com/pgcentralfoundation/pgrx) 0.19 and run `cargo pgrx install --release --pg-config <path to pg_config>`.
+- Alternatively, build the image yourself: `docker build --build-arg PG_MAJOR=17 -t pg_kv:17 .`
+
+Then, in either case:
 
 - **Loading:** pg_kv has to be in `shared_preload_libraries`, because its shared memory is reserved at server start.
 - **If it is not preloaded:** `CREATE EXTENSION pg_kv` fails with SQLSTATE `55000` and a hint. It does not install functions that can only raise errors. `kv.preloaded()` reports the state.
@@ -215,6 +234,10 @@ The **Benchmark** workflow (`.github/workflows/bench.yml`, started by hand) runs
 - the **pg_kv vs UNLOGGED** throughput, measured interleaved within the same rounds.
 
 The Redis comparison is **not conclusive** yet. Through Docker Desktop's network, every operation, Redis included, tops out around 10–17k ops/s, so the network is what is being measured. That comparison has to be re-run on Linux.
+
+**Expect Redis to win on raw throughput per round trip.** In one shorter run on a quieter machine it was about twice as fast as pg_kv over the network: its protocol is lighter than a SQL statement.
+
+pg_kv's point is something else. It removes a separate Redis where Postgres is already there, and it makes caching from SQL (triggers, PostgREST hooks, functions) cheap and bloat-free.
 
 ### Server-side cost per operation
 
