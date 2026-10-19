@@ -1,12 +1,9 @@
 name: CI
 
-# Manual only for now: GitHub Actions minutes are unavailable on this account, so
-# every push would show a failed run. ./ci/local.sh runs the same pipeline.
-# To restore automatic runs, add back:
-#   push:
-#     branches: [main]
-#   pull_request:
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:

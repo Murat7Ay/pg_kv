@@ -183,7 +183,7 @@ docker compose build pg
 PG_MAJOR=16 ./test/run.sh     # any of 15, 16, 17, 18 (builds pg_kv:16 if missing)
 ```
 
-CI (`.github/workflows/ci.yml`) runs the suite against PostgreSQL 15, 16, 17 and 18. Rust and cargo-pgrx are built once in a shared stage, and the matrix jobs reuse its layer cache. For now it is started by hand (`workflow_dispatch`) rather than on every push; the comment in the workflow says how to switch automatic runs back on.
+CI (`.github/workflows/ci.yml`) runs the suite against PostgreSQL 15, 16, 17 and 18 on every push and pull request. Rust and cargo-pgrx are built once in a shared stage, and the matrix jobs reuse its layer cache.
 
 The same pipeline runs locally with only Docker:
 
