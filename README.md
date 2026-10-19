@@ -166,6 +166,16 @@ PG_MAJOR=16 ./test/run.sh     # any of 15, 16, 17, 18 (builds pg_kv:16 if missin
 
 CI (`.github/workflows/ci.yml`) runs the suite against PostgreSQL 15, 16, 17 and 18 on every push and pull request. Rust and cargo-pgrx are built once in a shared stage, and the matrix jobs reuse its layer cache.
 
+The same pipeline runs locally with only Docker:
+
+```bash
+./ci/local.sh                  # PostgreSQL 15-18
+./ci/local.sh 18               # one major
+POST_STATUS=1 ./ci/local.sh    # also set a "local-ci" commit status on GitHub
+```
+
+It writes the logs and a report to `ci/results/<time>-<commit>/`. The CPU quotas match a GitHub runner (`SERVER_CPUS=2 CLIENT_CPUS=2`) unless you override them.
+
 The suite has five parts:
 
 - **Functional SQL tests** (`smoke.sql`, `rate_limit.sql`, `zset.sql`) for strings, TTL, eviction, the token bucket, sorted sets and access control. Every error case asserts its SQLSTATE, not only the message. Sorted sets are also run through 30k random `zadd`/`zincrby`/`zrem` operations, and every member's score and rank is compared against a plain SQL table used as ground truth.
