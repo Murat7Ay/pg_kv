@@ -94,6 +94,26 @@ A key holds a string, a token bucket or a sorted set:
 - `kv.set` and `kv.del` work on any kind.
 - `kv.ttl` and `kv.expire` work on any kind too, so a whole leaderboard can expire.
 
+### .NET / ASP.NET Core
+
+[PgKv for .NET](https://github.com/Murat7Ay/pg_kv-dotnet) wraps the SQL API in three NuGet packages:
+
+| Package | |
+|---|---|
+| [![PgKv](https://img.shields.io/nuget/vpre/PgKv?label=PgKv)](https://www.nuget.org/packages/PgKv) | `PgKvClient`: strings, counters, token buckets, sorted sets; typed exceptions from the SQLSTATEs |
+| [![PgKv.RateLimiting](https://img.shields.io/nuget/vpre/PgKv.RateLimiting?label=PgKv.RateLimiting)](https://www.nuget.org/packages/PgKv.RateLimiting) | a `System.Threading.RateLimiting` token bucket shared by every app instance |
+| [![PgKv.AspNetCore](https://img.shields.io/nuget/vpre/PgKv.AspNetCore?label=PgKv.AspNetCore)](https://www.nuget.org/packages/PgKv.AspNetCore) | one-line policy for the rate limiting middleware, 429 with `Retry-After` |
+
+The main use case is ASP.NET Core rate limiting across instances without Redis:
+
+```csharp
+builder.Services.AddPgKv(connectionString, o => o.KeyPrefix = "orders-api:");
+builder.Services.AddRateLimiter(o => o
+    .AddPgKvTokenBucketLimiter("api", ctx => ctx.Request.Headers["X-Api-Key"].ToString(),
+        bucket => { bucket.TokenLimit = 100; bucket.TokensPerPeriod = 100; bucket.ReplenishmentPeriod = TimeSpan.FromMinutes(1); })
+    .UsePgKvRejectionResponse());
+```
+
 ## How it works
 
 - **Shared memory** is sized at server start.
